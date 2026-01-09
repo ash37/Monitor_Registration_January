@@ -1,0 +1,50 @@
+name: Monitor runDisney Registration
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'    # Every 6 hours
+  workflow_dispatch:         # Allow manual trigger
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check page content
+        id: check
+        run: |
+          RESPONSE=$(curl -s -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
+            "https://registration.rundisney.com/?event=a3069dc761c8d71ead58&utm_source=teamrundis&utm_medium=rundisalerts")
+
+          if echo "$RESPONSE" | grep -qi "registration for this event is closed"; then
+            echo "status=closed" >> $GITHUB_OUTPUT
+            echo "Still closed"
+          else
+            echo "status=open" >> $GITHUB_OUTPUT
+            echo "POSSIBLY OPEN!"
+          fi
+
+      - name: Create issue if changed to open
+        if: steps.check.outputs.status == 'open'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issue = await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: "🚨 Disneyland Half Marathon 2026 Registration MAY BE OPEN!",
+              body: `The closed message is no longer present on the page.\n\nURL: https://registration.rundisney.com/?event=a3069dc761c8d71ead58\n\nTime: ${new Date().toISOString()}\n\nPlease check immediately!`
+            });
+            console.log(`Issue created: ${issue.data.html_url}`);
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cache previous state (optional improvement)
+        if: always()
+        uses: actions/cache@v4
+        with:
+          path: status.txt
+          key: registration-status-${{ github.run_id }}
