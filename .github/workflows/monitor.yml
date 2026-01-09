@@ -17,41 +17,48 @@ jobs:
         id: check
         shell: bash
         run: |
-          set -u
+          set -u -o pipefail
 
           URL="https://registration.rundisney.com/?event=a3069dc761c8d71ead58&utm_source=teamrundis&utm_medium=rundisalerts"
           CLOSED_TEXT="The registration for this event is closed"
 
-          # Fetch (follow redirects) + capture final URL. Don't fail the step on curl errors.
           body="$(mktemp)"
-          final_url="$(
+
+          # Run curl without failing the step
+          set +e
+          final_url_and_code="$(
             curl -sS -L \
               -A "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome Safari" \
               -H "Accept-Language: en-US,en;q=0.9" \
               -o "$body" \
-              -w '%{url_effective}' \
-              "$URL" || true
+              -w $'\n%{url_effective}\n%{http_code}\n' \
+              "$URL"
           )"
+          curl_rc=$?
+          set -e
 
-          # Expose URL to later steps
+          final_url="$(echo "$final_url_and_code" | sed -n '2p')"
+          http_code="$(echo "$final_url_and_code" | sed -n '3p')"
+
           echo "url=$URL" >> "$GITHUB_OUTPUT"
           echo "final_url=$final_url" >> "$GITHUB_OUTPUT"
+          echo "http_code=$http_code" >> "$GITHUB_OUTPUT"
 
-          # If curl failed or final_url is empty, assume NOT open
-          if [ -z "${final_url:-}" ]; then
+          # Any curl error or non-200 => not open
+          if [ "$curl_rc" -ne 0 ] || [ "$http_code" != "200" ]; then
             echo "open=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          # If we got shunted to the Akamai queue, it's not "open" in a usable way
-          if echo "$final_url" | grep -qi "queue\.registration\.rundisney\.com"; then
+          # Queue/holding pages => not open
+          if echo "$final_url" | grep -Eqi "queue\.registration\.rundisney\.com|akamai|queue-it|waitingroom"; then
             echo "open=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           html="$(cat "$body")"
 
-          # Your inverted logic: trigger when closed marker disappears
+          # Trigger when closed marker disappears
           if echo "$html" | grep -qi "$CLOSED_TEXT"; then
             echo "open=false" >> "$GITHUB_OUTPUT"
           else
@@ -78,15 +85,17 @@ jobs:
 
             const url = `${{ steps.check.outputs.url }}`;
             const finalUrl = `${{ steps.check.outputs.final_url }}`;
+            const httpCode = `${{ steps.check.outputs.http_code }}`;
 
             await github.rest.issues.create({
               owner, repo,
               title,
               body: [
-                "Closed marker text is no longer present AND request did not land on the Akamai queue page.",
+                "Closed marker text is no longer present AND request did not land on a queue/holding page.",
                 "",
                 `URL: ${url}`,
                 `Final URL: ${finalUrl}`,
+                `HTTP: ${httpCode}`,
                 "",
                 `Ping: @${owner}`
               ].join("\n")
