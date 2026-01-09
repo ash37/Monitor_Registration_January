@@ -13,18 +13,19 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - name: Fetch page and look for keyword
+      - name: Fetch page and check CLOSED marker
         id: check
         run: |
           set -e
-          URL="https://example.com/registration"   # <-- change this
-          KEYWORD="Registration is open"           # <-- change this
+          URL="https://registration.rundisney.com/?event=a3069dc761c8d71ead58&utm_source=teamrundis&utm_medium=rundisalerts"
+          CLOSED_TEXT="The registration for this event is closed"
+
           html="$(curl -fsSL "$URL")"
 
-          if echo "$html" | grep -qi "$KEYWORD"; then
-            echo "open=true" >> "$GITHUB_OUTPUT"
-          else
+          if echo "$html" | grep -qi "$CLOSED_TEXT"; then
             echo "open=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "open=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Create issue (only once)
@@ -50,8 +51,9 @@ jobs:
               owner, repo,
               title,
               body: [
-                "Detected the registration page matching the expected keyword.",
+                "Closed marker text is no longer present on the registration page.",
                 "",
+                `URL: ${process.env.URL || "see workflow step"}`,
                 `Ping: @${owner}`
               ].join("\n")
             });
