@@ -13,15 +13,45 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - name: Fetch page and check CLOSED marker
+      - name: Fetch page and detect open/closed
         id: check
+        shell: bash
         run: |
-          set -e
+          set -u
+
           URL="https://registration.rundisney.com/?event=a3069dc761c8d71ead58&utm_source=teamrundis&utm_medium=rundisalerts"
           CLOSED_TEXT="The registration for this event is closed"
 
-          html="$(curl -fsSL "$URL")"
+          # Fetch (follow redirects) + capture final URL. Don't fail the step on curl errors.
+          body="$(mktemp)"
+          final_url="$(
+            curl -sS -L \
+              -A "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome Safari" \
+              -H "Accept-Language: en-US,en;q=0.9" \
+              -o "$body" \
+              -w '%{url_effective}' \
+              "$URL" || true
+          )"
 
+          # Expose URL to later steps
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "final_url=$final_url" >> "$GITHUB_OUTPUT"
+
+          # If curl failed or final_url is empty, assume NOT open
+          if [ -z "${final_url:-}" ]; then
+            echo "open=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # If we got shunted to the Akamai queue, it's not "open" in a usable way
+          if echo "$final_url" | grep -qi "queue\.registration\.rundisney\.com"; then
+            echo "open=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          html="$(cat "$body")"
+
+          # Your inverted logic: trigger when closed marker disappears
           if echo "$html" | grep -qi "$CLOSED_TEXT"; then
             echo "open=false" >> "$GITHUB_OUTPUT"
           else
@@ -37,7 +67,6 @@ jobs:
             const owner = context.repo.owner;
             const repo  = context.repo.repo;
 
-            // Avoid duplicates: if there's already an open issue with this title, do nothing.
             const existing = await github.rest.search.issuesAndPullRequests({
               q: `repo:${owner}/${repo} is:issue is:open in:title "${title}"`
             });
@@ -47,13 +76,18 @@ jobs:
               return;
             }
 
+            const url = `${{ steps.check.outputs.url }}`;
+            const finalUrl = `${{ steps.check.outputs.final_url }}`;
+
             await github.rest.issues.create({
               owner, repo,
               title,
               body: [
-                "Closed marker text is no longer present on the registration page.",
+                "Closed marker text is no longer present AND request did not land on the Akamai queue page.",
                 "",
-                `URL: ${process.env.URL || "see workflow step"}`,
+                `URL: ${url}`,
+                `Final URL: ${finalUrl}`,
+                "",
                 `Ping: @${owner}`
               ].join("\n")
             });
