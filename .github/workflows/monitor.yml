@@ -7,13 +7,19 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - name: Debug fetch
+      - name: Probe without following redirects
         run: |
-          set -euxo pipefail
-          curl -sS -L -D headers.txt -o body.txt \
+          set -euo pipefail
+          URL="https://registration.rundisney.com/?event=a3069dc761c8d71ead58"
+
+          code=$(curl -sS -o /dev/null -D headers.txt -w "%{http_code}" \
             -A "Mozilla/5.0 (GitHubActions Monitor_Registration_January)" \
-            "https://registration.rundisney.com/?event=a3069dc761c8d71ead58" || true
+            "$URL")
+
+          echo "HTTP: $code"
           echo "---- headers ----"
-          cat headers.txt
-          echo "---- first 200 bytes of body ----"
-          head -c 200 body.txt; echo
+          sed -n '1,80p' headers.txt
+
+          # Print redirect location if present
+          loc=$(grep -i '^location:' headers.txt | head -n 1 | sed 's/\r$//')
+          echo "Location: ${loc:-<none>}"
