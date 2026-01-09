@@ -1,57 +1,19 @@
-name: Monitor Registration
+name: Monitor Registration (debug)
 
 on:
-  schedule:
-    - cron: "*/30 * * * *"   # every 30 minutes
   workflow_dispatch: {}
-
-permissions:
-  issues: write
-  contents: read
 
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - name: Fetch page and look for keyword
-        id: check
+      - name: Debug fetch
         run: |
-          set -e
-          URL="https://example.com/registration"   # <-- change this
-          KEYWORD="Registration is open"           # <-- change this
-          html="$(curl -fsSL "$URL")"
-
-          if echo "$html" | grep -qi "$KEYWORD"; then
-            echo "open=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "open=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Create issue (only once)
-        if: steps.check.outputs.open == 'true'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const title = "🚨 Registration appears OPEN";
-            const owner = context.repo.owner;
-            const repo  = context.repo.repo;
-
-            // Avoid duplicates: if there's already an open issue with this title, do nothing.
-            const existing = await github.rest.search.issuesAndPullRequests({
-              q: `repo:${owner}/${repo} is:issue is:open in:title "${title}"`
-            });
-
-            if (existing.data.total_count > 0) {
-              core.info("Issue already exists; skipping.");
-              return;
-            }
-
-            await github.rest.issues.create({
-              owner, repo,
-              title,
-              body: [
-                "Detected the registration page matching the expected keyword.",
-                "",
-                `Ping: @${owner}`
-              ].join("\n")
-            });
+          set -euxo pipefail
+          curl -sS -L -D headers.txt -o body.txt \
+            -A "Mozilla/5.0 (GitHubActions Monitor_Registration_January)" \
+            "https://registration.rundisney.com/?event=a3069dc761c8d71ead58" || true
+          echo "---- headers ----"
+          cat headers.txt
+          echo "---- first 200 bytes of body ----"
+          head -c 200 body.txt; echo
