@@ -1,25 +1,57 @@
-name: Monitor Registration (debug)
+name: Monitor Registration
 
 on:
+  schedule:
+    - cron: "*/30 * * * *"   # every 30 minutes
   workflow_dispatch: {}
+
+permissions:
+  issues: write
+  contents: read
 
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - name: Probe without following redirects
+      - name: Fetch page and look for keyword
+        id: check
         run: |
-          set -euo pipefail
-          URL="https://registration.rundisney.com/?event=a3069dc761c8d71ead58"
+          set -e
+          URL="https://example.com/registration"   # <-- change this
+          KEYWORD="Registration is open"           # <-- change this
+          html="$(curl -fsSL "$URL")"
 
-          code=$(curl -sS -o /dev/null -D headers.txt -w "%{http_code}" \
-            -A "Mozilla/5.0 (GitHubActions Monitor_Registration_January)" \
-            "$URL")
+          if echo "$html" | grep -qi "$KEYWORD"; then
+            echo "open=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "open=false" >> "$GITHUB_OUTPUT"
+          fi
 
-          echo "HTTP: $code"
-          echo "---- headers ----"
-          sed -n '1,80p' headers.txt
+      - name: Create issue (only once)
+        if: steps.check.outputs.open == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = "🚨 Registration appears OPEN";
+            const owner = context.repo.owner;
+            const repo  = context.repo.repo;
 
-          # Print redirect location if present
-          loc=$(grep -i '^location:' headers.txt | head -n 1 | sed 's/\r$//')
-          echo "Location: ${loc:-<none>}"
+            // Avoid duplicates: if there's already an open issue with this title, do nothing.
+            const existing = await github.rest.search.issuesAndPullRequests({
+              q: `repo:${owner}/${repo} is:issue is:open in:title "${title}"`
+            });
+
+            if (existing.data.total_count > 0) {
+              core.info("Issue already exists; skipping.");
+              return;
+            }
+
+            await github.rest.issues.create({
+              owner, repo,
+              title,
+              body: [
+                "Detected the registration page matching the expected keyword.",
+                "",
+                `Ping: @${owner}`
+              ].join("\n")
+            });
